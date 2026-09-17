@@ -1,0 +1,11 @@
+# Bundle patch layer for dsh-plugin-mimo-delegate.
+#
+# The row loads this package's main entry (lib/index.js) as the HOST half - a
+# plain Cordis plugin. The `dsh.client` block in package.json is what makes the
+# web app additionally load ./client (lib/client.js) as the BROWSER half; that
+# half is a hand-written lazy-CJS factory registered on window.__ModuleLoader__.
+#
+# Mirrors the shape used by installed third-party plugins (e.g. dsh-context).
+- insert:
+    - id: mimo-delegate
+      name: dsh-plugin-mimo-delegate
