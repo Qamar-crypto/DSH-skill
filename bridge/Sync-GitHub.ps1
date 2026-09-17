@@ -29,8 +29,10 @@ $Mirror = Join-Path $Repo 'bridge'
 # package (the plugin is the repo root already).
 $MirrorFiles = @(
   'MimoDesktop.ps1', 'MimoProgress.ps1', 'MimoProgress.cmd',
-  'Set-Delegation.ps1', 'Check-Drift.ps1', 'Install-Plugin.ps1',
-  'Sync-GitHub.ps1', 'README.md'
+  'Set-Delegation.ps1', 'Check-Drift.ps1', 'Sync-GitHub.ps1', 'README.md',
+  # Install-Plugin.ps1 lives one level down; the copy loop uses the leaf name,
+  # so a relative path here is fine (it was silently skipped before).
+  'plugin\Install-Plugin.ps1'
 )
 $ProxyCandidates = @('http://127.0.0.1:7897', 'http://127.0.0.1:7890')
 
@@ -100,7 +102,7 @@ New-Item -ItemType Directory -Force -Path $Mirror | Out-Null
 $copied = 0
 foreach ($f in $MirrorFiles) {
   $src = Join-Path $Bridge $f
-  if (Test-Path $src) { Copy-Item $src (Join-Path $Mirror $f) -Force; $copied++ }
+  if (Test-Path $src) { Copy-Item $src (Join-Path $Mirror (Split-Path $src -Leaf)) -Force; $copied++ }
 }
 $rulesDir = Join-Path $Bridge 'rules'
 if (Test-Path $rulesDir) {
