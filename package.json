@@ -1,6 +1,6 @@
 {
   "name": "dsh-plugin-mimo-delegate",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "description": "DeepSeek Harness plugin: a sidebar switch plus settings card that turns the local Xiaomi MiMo Desktop delegation pipeline (the mimo-delegate skill) on and off.",
   "type": "module",
   "main": "lib/index.js",
