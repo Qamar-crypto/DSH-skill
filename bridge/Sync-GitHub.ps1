@@ -48,6 +48,7 @@ function Get-GitProxyArgs {
   return @()
 }
 
+# Returns @{ ExitCode; Text }. Judge success only by ExitCode, never by text.
 function Invoke-Git {
   param([Parameter(Mandatory)][string[]]$GitArgs)
   $prevEap = $ErrorActionPreference
@@ -58,7 +59,10 @@ function Invoke-Git {
       '-c', 'core.safecrlf=false',
       '-C', $Repo
     ) + $GitArgs
-    return (& git @all 2>&1 | Out-String)
+    $raw = & git @all 2>&1
+    $code = $LASTEXITCODE
+    $text = ($raw | Out-String)
+    return @{ ExitCode = $code; Text = $text }
   } finally {
     $ErrorActionPreference = $prevEap
   }
@@ -71,23 +75,23 @@ if (-not (Test-Path (Join-Path $Repo '.git'))) {
 }
 
 if ($Action -eq 'status') {
-  $dirty = (Invoke-Git @('status', '--porcelain')).Trim()
+  $dirty = ((Invoke-Git @('status', '--porcelain')).Text).Trim()
   if ($dirty) {
     Write-Host 'uncommitted changes:' -ForegroundColor Yellow
     $dirty -split "`n" | ForEach-Object { "  $_" }
   } else {
     Write-Host 'working tree: clean'
   }
-  $local = (Invoke-Git @('rev-parse', 'HEAD')).Trim()
+  $local = ((Invoke-Git @('rev-parse', 'HEAD')).Text).Trim()
   Write-Host "local  HEAD: $local"
   $fetch = Invoke-Git @('fetch', 'origin')
-  if ($fetch -match 'fatal|error|Could not|unable') {
+  if ($fetch.ExitCode -ne 0) {
     Write-Host 'FETCH FAILED (network?):' -ForegroundColor Red
-    $fetch.Trim() -split "`n" | Select-Object -First 2 | ForEach-Object { "  $_" }
+    $fetch.Text.Trim() -split "`n" | Select-Object -First 2 | ForEach-Object { "  $_" }
     Write-Host 'DRIFT UNKNOWN - cannot see the remote' -ForegroundColor Red
     exit 1
   }
-  $remote = (Invoke-Git @('rev-parse', 'origin/main')).Trim()
+  $remote = ((Invoke-Git @('rev-parse', 'origin/main')).Text).Trim()
   Write-Host "remote HEAD: $remote"
   if ($local -and $remote -and $local -eq $remote) {
     Write-Host 'IN SYNC with GitHub' -ForegroundColor Green
@@ -116,37 +120,48 @@ Write-Host "mirrored $copied file(s) into bridge\"
 
 $msg = if ($Message) { $Message } else { 'sync bridge tooling' }
 [void](Invoke-Git @('add', '-A'))
-$status = (Invoke-Git @('status', '--porcelain')).Trim()
+$status = ((Invoke-Git @('status', '--porcelain')).Text).Trim()
 if (-not $status) {
   Write-Host 'nothing to commit' -ForegroundColor Yellow
 } else {
-  $headBefore = (Invoke-Git @('rev-parse', 'HEAD')).Trim()
+  $headBefore = ((Invoke-Git @('rev-parse', 'HEAD')).Text).Trim()
   $commit = Invoke-Git @('commit', '-q', '-m', $msg)
-  $headAfter = (Invoke-Git @('rev-parse', 'HEAD')).Trim()
-  if ($headAfter -eq $headBefore) {
+  $headAfter = ((Invoke-Git @('rev-parse', 'HEAD')).Text).Trim()
+  if ($commit.ExitCode -ne 0 -or $headAfter -eq $headBefore) {
     Write-Host 'COMMIT FAILED: HEAD unchanged' -ForegroundColor Red
-    $commit.Trim() -split "`n" | Select-Object -First 5 | ForEach-Object { Write-Host "  $_" -ForegroundColor Red }
+    $commit.Text.Trim() -split "`n" | Select-Object -First 5 | ForEach-Object { Write-Host "  $_" -ForegroundColor Red }
     $st = Invoke-Git @('status', '--porcelain')
-    $st.Trim() -split "`n" | Select-Object -First 8 | ForEach-Object { Write-Host "  $_" -ForegroundColor Yellow }
+    $st.Text.Trim() -split "`n" | Select-Object -First 8 | ForEach-Object { Write-Host "  $_" -ForegroundColor Yellow }
     exit 1
   }
   Write-Host "committed: $msg" -ForegroundColor Green
 }
 
 $push = Invoke-Git @('push', 'origin', 'main')
-if ($push -match 'fatal|error|Could not|unable') {
+if ($push.ExitCode -ne 0) {
   Write-Host 'PUSH FAILED:' -ForegroundColor Red
-  $push.Trim() -split "`n" | Select-Object -First 3 | ForEach-Object { "  $_" }
+  $push.Text.Trim() -split "`n" | Select-Object -First 3 | ForEach-Object { "  $_" }
   exit 1
 }
-($push.Trim() -split "`n") | Select-Object -Last 1 | ForEach-Object { "  $_" }
-$tags = Invoke-Git @('push', '--tags', 'origin')
-if ($tags -match 'fatal|error') { Write-Host 'tag push failed (non-fatal)' -ForegroundColor Yellow }
 
-$local = (Invoke-Git @('rev-parse', 'HEAD')).Trim()
-$remote = (Invoke-Git @('rev-parse', 'origin/main')).Trim()
+# Independent post-push check: fetch, then HEAD must equal origin/main.
+$vfetch = Invoke-Git @('fetch', 'origin')
+if ($vfetch.ExitCode -ne 0) {
+  Write-Host 'VERIFY FETCH FAILED:' -ForegroundColor Red
+  $vfetch.Text.Trim() -split "`n" | Select-Object -First 3 | ForEach-Object { "  $_" }
+  exit 1
+}
+$local = ((Invoke-Git @('rev-parse', 'HEAD')).Text).Trim()
+$remote = ((Invoke-Git @('rev-parse', 'origin/main')).Text).Trim()
 Write-Host "local  HEAD: $local"
 Write-Host "remote HEAD: $remote"
-if ($local -eq $remote) { Write-Host 'IN SYNC with GitHub' -ForegroundColor Green; exit 0 }
-Write-Host 'STILL OUT OF SYNC' -ForegroundColor Red
-exit 1
+if (-not $local -or -not $remote -or $local -ne $remote) {
+  Write-Host 'PUSH FAILED: HEAD does not match origin/main after fetch' -ForegroundColor Red
+  exit 1
+}
+
+$tags = Invoke-Git @('push', '--tags', 'origin')
+if ($tags.ExitCode -ne 0) { Write-Host 'tag push failed (non-fatal)' -ForegroundColor Yellow }
+
+Write-Host 'IN SYNC with GitHub' -ForegroundColor Green
+exit 0
