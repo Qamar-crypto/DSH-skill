@@ -68,6 +68,41 @@ function Invoke-Git {
   }
 }
 
+# Network git calls (fetch / push): up to 3 attempts, 4s pause, exit-code only.
+function Invoke-GitRetry {
+  param([Parameter(Mandatory)][string[]]$GitArgs, [int]$MaxAttempts = 3)
+  $attempt = 0
+  $last = $null
+  while ($attempt -lt $MaxAttempts) {
+    $attempt++
+    $last = Invoke-Git -GitArgs $GitArgs
+    if ($last.ExitCode -eq 0) { return $last }
+    $first = ''
+    $lines = @(($last.Text | Out-String).Trim() -split "`n")
+    if ($lines.Count -gt 0 -and $lines[0]) { $first = $lines[0].Trim() }
+    Write-Host ("retry {0}/{1} failed (exit {2}): {3}" -f $attempt, $MaxAttempts, $last.ExitCode, $first) -ForegroundColor Yellow
+    if ($attempt -lt $MaxAttempts) { Start-Sleep -Seconds 4 }
+  }
+  return $last
+}
+
+# Network git ops: up to 3 attempts, 4s between failures. Success on any try wins.
+function Invoke-GitRetry {
+  param([Parameter(Mandatory)][string[]]$GitArgs, [int]$Max = 3, [int]$DelaySec = 4)
+  $last = $null
+  for ($i = 1; $i -le $Max; $i++) {
+    $last = Invoke-Git $GitArgs
+    if ($last.ExitCode -eq 0) { return $last }
+    $first = @(($last.Text.Trim() -split "`n") | Where-Object { $_.Trim() } | Select-Object -First 1)
+    if (-not $first) { $first = @('(no output)') }
+    if ($i -lt $Max) {
+      Write-Host ("retry {0}/{1} failed (exit {2}): {3}" -f $i, $Max, $last.ExitCode, $first[0].Trim())
+      Start-Sleep -Seconds $DelaySec
+    }
+  }
+  return $last
+}
+
 if (-not (Test-Path (Join-Path $Repo '.git'))) {
   Write-Host "NOT A REPO: $Repo" -ForegroundColor Red
   Write-Host 'run: git init, add the remote, then re-run with -Action push'
@@ -84,7 +119,7 @@ if ($Action -eq 'status') {
   }
   $local = ((Invoke-Git @('rev-parse', 'HEAD')).Text).Trim()
   Write-Host "local  HEAD: $local"
-  $fetch = Invoke-Git @('fetch', 'origin')
+  $fetch = Invoke-GitRetry @('fetch', 'origin')
   if ($fetch.ExitCode -ne 0) {
     Write-Host 'FETCH FAILED (network?):' -ForegroundColor Red
     $fetch.Text.Trim() -split "`n" | Select-Object -First 2 | ForEach-Object { "  $_" }
@@ -137,7 +172,7 @@ if (-not $status) {
   Write-Host "committed: $msg" -ForegroundColor Green
 }
 
-$push = Invoke-Git @('push', 'origin', 'main')
+$push = Invoke-GitRetry @('push', 'origin', 'main')
 if ($push.ExitCode -ne 0) {
   Write-Host 'PUSH FAILED:' -ForegroundColor Red
   $push.Text.Trim() -split "`n" | Select-Object -First 3 | ForEach-Object { "  $_" }
@@ -145,9 +180,9 @@ if ($push.ExitCode -ne 0) {
 }
 
 # Independent post-push check: fetch, then HEAD must equal origin/main.
-$vfetch = Invoke-Git @('fetch', 'origin')
+$vfetch = Invoke-GitRetry @('fetch', 'origin')
 if ($vfetch.ExitCode -ne 0) {
-  Write-Host 'VERIFY FETCH FAILED:' -ForegroundColor Red
+  Write-Host 'FETCH FAILED (network?):' -ForegroundColor Red
   $vfetch.Text.Trim() -split "`n" | Select-Object -First 3 | ForEach-Object { "  $_" }
   exit 1
 }
@@ -160,7 +195,7 @@ if (-not $local -or -not $remote -or $local -ne $remote) {
   exit 1
 }
 
-$tags = Invoke-Git @('push', '--tags', 'origin')
+$tags = Invoke-GitRetry @('push', '--tags', 'origin')
 if ($tags.ExitCode -ne 0) { Write-Host 'tag push failed (non-fatal)' -ForegroundColor Yellow }
 
 Write-Host 'IN SYNC with GitHub' -ForegroundColor Green
