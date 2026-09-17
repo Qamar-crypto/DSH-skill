@@ -263,10 +263,34 @@ ask -SessionId ses_ffe5f503bf1a2ffeCS40Wd6Cku -Dir 'D:\DSH and MIMOdesktop' -Per
 `https://api.xiaomimimo.com/v1`（OpenAI 兼容）或 `https://api.xiaomimimo.com/anthropic`；
 Token Plan 则是 `https://token-plan-cn.xiaomimimo.com/v1`。
 
+## 每次改动都要同步到 GitHub（用户长期要求）
+
+仓库：`https://github.com/Qamar-crypto/DSH-skill`（插件在根目录，桥的工具镜像在 `bridge/`）。
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File 'D:\Deepseek Harness\_mimo_bridge\Sync-GitHub.ps1' -Action status
+powershell -NoProfile -ExecutionPolicy Bypass -File 'D:\Deepseek Harness\_mimo_bridge\Sync-GitHub.ps1' -Action push -Message "<改了什么>"
+```
+
+- **只有 `IN SYNC` 才算这次改动结束**；`OUT OF SYNC` / `FETCH FAILED` 都是失败信号，不许当成功。
+- 本机直连 GitHub 不通，脚本自动探测 clash 代理（7897/7890）并给 git 加 `-c http.proxy=…`。
+- **成败只看退出码，不看输出文本。** git 会把正常进度写到 stderr（`To https://github.com/...`），
+  早期版本用 `-match 'fatal|error|…'` 猜成败，于是在 push **成功**时误报 `PUSH FAILED` 并 exit 1
+  （2026-09-17 实测踩到，由 MiMo 修复）。现在：每次 git 调用取 `$LASTEXITCODE`；push 之后再
+  `fetch` 一次，用 `HEAD == origin/main` 做独立核对，相等才打印成功。
+
 ## 文件
 
 - `MimoDesktop.ps1` — 桥本体，纯 ASCII（避免 PowerShell 代码页把非 ASCII 字符读坏），
   内含完整接口注释与踩坑说明。
+- `MimoProgress.ps1` / `MimoProgress.cmd` — 给用户看的实时进度窗口（`[think]/[say]/[tool]/[file]`
+  + 30 秒心跳 + 150 秒无活动 `[stall]` 红字告警；`-Follow` 等下一轮、`-Replay` 看历史）。
+- `Set-Delegation.ps1` — 委托总开关（`-Action status|on|off`）：搬 `~/.dsh/skills/mimo-delegate`
+  与 `skills-disabled/`，并按 `rules\*.md` 重写 `~/.dsh/AGENTS.md` 里的标记块。
+- `rules\mimo-delegate-on.md` / `-off.md` — AGENTS.md 标记块的**唯一真源**，别直接改 AGENTS.md。
+- `Check-Drift.ps1` — 比对桥的 `$BridgeVersion` + 动作表与 skill 的戳/表格，输出
+  `IN SYNC` / `DRIFT DETECTED` / `DISABLED`。
+- `Sync-GitHub.ps1` — 上文的同步检查器（镜像 `bridge/`、提交、推 main + tags）。
 - `worker-session.txt` — 当前 worker 会话 id。
 
 ### PowerShell 5.1 踩过的坑
