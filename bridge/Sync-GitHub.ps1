@@ -51,9 +51,11 @@ function Invoke-Git {
   $prevEap = $ErrorActionPreference
   $ErrorActionPreference = 'Continue'
   try {
-    $all = @(Get-GitProxyArgs) +
-      @('-c', 'core.autocrlf=false', '-c', 'core.safecrlf=false') +
-      @('-C', $Repo) + $GitArgs
+    $all = @(Get-GitProxyArgs) + @(
+      '-c', 'core.autocrlf=false',
+      '-c', 'core.safecrlf=false',
+      '-C', $Repo
+    ) + $GitArgs
     return (& git @all 2>&1 | Out-String)
   } finally {
     $ErrorActionPreference = $prevEap
@@ -111,22 +113,22 @@ if (Test-Path $rulesDir) {
 Write-Host "mirrored $copied file(s) into bridge\"
 
 $msg = if ($Message) { $Message } else { 'sync bridge tooling' }
-$headBefore = (Invoke-Git @('rev-parse', 'HEAD')).Trim()
 [void](Invoke-Git @('add', '-A'))
 $status = (Invoke-Git @('status', '--porcelain')).Trim()
 if (-not $status) {
   Write-Host 'nothing to commit' -ForegroundColor Yellow
 } else {
+  $headBefore = (Invoke-Git @('rev-parse', 'HEAD')).Trim()
   $commit = Invoke-Git @('commit', '-q', '-m', $msg)
   $headAfter = (Invoke-Git @('rev-parse', 'HEAD')).Trim()
-  if ($commit -match 'fatal|error') { Write-Host $commit.Trim() -ForegroundColor Red }
-  elseif (-not $headAfter -or $headAfter -eq $headBefore) {
-    Write-Host 'COMMIT FAILED - HEAD did not change' -ForegroundColor Red
-    Write-Host $commit.Trim() -ForegroundColor Red
+  if ($headAfter -eq $headBefore) {
+    Write-Host 'COMMIT FAILED: HEAD unchanged' -ForegroundColor Red
+    $commit.Trim() -split "`n" | Select-Object -First 5 | ForEach-Object { Write-Host "  $_" -ForegroundColor Red }
+    $st = Invoke-Git @('status', '--porcelain')
+    $st.Trim() -split "`n" | Select-Object -First 8 | ForEach-Object { Write-Host "  $_" -ForegroundColor Yellow }
     exit 1
-  } else {
-    Write-Host "committed: $msg" -ForegroundColor Green
   }
+  Write-Host "committed: $msg" -ForegroundColor Green
 }
 
 $push = Invoke-Git @('push', 'origin', 'main')
