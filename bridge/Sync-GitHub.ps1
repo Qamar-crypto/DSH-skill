@@ -68,24 +68,6 @@ function Invoke-Git {
   }
 }
 
-# Network git calls (fetch / push): up to 3 attempts, 4s pause, exit-code only.
-function Invoke-GitRetry {
-  param([Parameter(Mandatory)][string[]]$GitArgs, [int]$MaxAttempts = 3)
-  $attempt = 0
-  $last = $null
-  while ($attempt -lt $MaxAttempts) {
-    $attempt++
-    $last = Invoke-Git -GitArgs $GitArgs
-    if ($last.ExitCode -eq 0) { return $last }
-    $first = ''
-    $lines = @(($last.Text | Out-String).Trim() -split "`n")
-    if ($lines.Count -gt 0 -and $lines[0]) { $first = $lines[0].Trim() }
-    Write-Host ("retry {0}/{1} failed (exit {2}): {3}" -f $attempt, $MaxAttempts, $last.ExitCode, $first) -ForegroundColor Yellow
-    if ($attempt -lt $MaxAttempts) { Start-Sleep -Seconds 4 }
-  }
-  return $last
-}
-
 # Network git ops: up to 3 attempts, 4s between failures. Success on any try wins.
 function Invoke-GitRetry {
   param([Parameter(Mandatory)][string[]]$GitArgs, [int]$Max = 3, [int]$DelaySec = 4)
