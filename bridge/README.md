@@ -142,6 +142,11 @@ ask -SessionId ses_ffe5f503bf1a2ffeCS40Wd6Cku -Message 'Reply with exactly this 
 5. 这是**非官方内部接口**，随应用更新可能变化；应用重启后端口和 token 都会变
    （脚本每次调用都重新读 cred 文件，所以能自动跟上）。
 6. 桥跑在用户自己的机器、自己的应用、自己的账号上；token 只在本机回环使用。
+7. **冷启动已实测通过（2026-09-18）。** 应用完全没开（进程数 0、cred 里的端口无人监听）时直接调桥：
+   `start` → `{"alreadyRunning": false, "pid": 31732, "port": 58588}`，**3 秒**拉起；紧接着 `health` →
+   `{"ok": true, "api": 1, "app": "26.914.142245", "engine": "ready"}`，且 `desktop-api.json` 的
+   port/pid 已刷新（旧 53832/14536 → 新 58588/31732）。注意：**强杀进程不等于取消那一轮**，
+   重启后是否自动续跑这次没观察到（本次没续跑）。
 
 ## 工具调用、权限与工作目录（已实测）
 
