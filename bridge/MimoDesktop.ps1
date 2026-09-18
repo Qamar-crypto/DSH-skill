@@ -35,7 +35,7 @@ Usage:
 [CmdletBinding()]
 param(
   [Parameter(Mandatory, Position = 0)]
-  [ValidateSet('health', 'start', 'list', 'messages', 'progress', 'attachments', 'saveattachments', 'send', 'ask', 'wait', 'watch', 'file', 'version', 'help')]
+  [ValidateSet('health', 'start', 'list', 'messages', 'progress', 'attachments', 'saveattachments', 'send', 'ask', 'wait', 'watch', 'file', 'version', 'newproject', 'newtask', 'help')]
   [string]$Action,
 
   [string]$SessionId,
@@ -76,9 +76,10 @@ $MimoExe = 'D:\MIMO Desk\Xiaomi MiMo\Xiaomi MiMo.exe'
 # Bump this whenever the bridge changes (new action, new parameter, changed
 # behaviour). Check-Drift.ps1 compares it against the skill's stamp, so the
 # skill can never silently fall behind the bridge.
-$BridgeVersion = '1.1.5'
+$BridgeVersion = '1.2.0'
 $BridgeActions = @('health', 'start', 'list', 'messages', 'progress', 'attachments',
-  'saveattachments', 'send', 'ask', 'wait', 'watch', 'file', 'version')
+  'saveattachments', 'send', 'ask', 'wait', 'watch', 'file', 'version',
+  'newproject', 'newtask')
 $AutoStart = -not $NoAutoStart
 
 # -MessageFile exists because a multi-line prompt passed as a native argument
@@ -319,6 +320,63 @@ function Wait-MimoIdle {
 switch ($Action) {
   'help' {
     Get-Help $PSCommandPath -Detailed
+    break
+  }
+
+  'newproject' {
+    # Create a project in MiMo Desktop whose folder is exactly -Dir. MiMo's HTTP
+    # API has no create routes at all, so this drives the app's own Ctrl+O folder
+    # picker (see MimoUiAuto.ps1 for the measurements behind it).
+    if (-not $Dir) { throw 'newproject requires -Dir <project folder>' }
+    if (-not (Test-Path -LiteralPath $Dir)) { throw "project folder not found: $Dir" }
+    $ui = Join-Path $PSScriptRoot 'MimoUiAuto.ps1'
+    if (-not (Test-Path $ui)) { throw "UI automation script missing: $ui" }
+    $tmp = [System.IO.Path]::GetTempFileName()
+    [System.IO.File]::WriteAllText($tmp, $Dir, (New-Object System.Text.UTF8Encoding($false)))
+    try {
+      $log = @(& powershell -NoProfile -ExecutionPolicy Bypass -File $ui -Action newproject -ProjectFile $tmp 2>&1)
+      $code = $LASTEXITCODE
+    } finally {
+      Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
+    }
+    if ($code -ne 0) { throw ("newproject failed (exit {0}): {1}" -f $code, ($log -join ' | ')) }
+    [pscustomobject]@{
+      ok     = $true
+      action = 'newproject'
+      dir    = $Dir
+      note   = 'MiMo shows this folder in its project list; sessions created with newtask land in it.'
+      log    = @($log)
+    } | ConvertTo-Json -Depth 4
+    break
+  }
+
+  'newtask' {
+    # Create a session *inside* the project at -Dir and submit the task text.
+    # Returns the session id, so the caller can continue with send/wait on it.
+    if (-not $Dir) { throw 'newtask requires -Dir <project folder>' }
+    if (-not (Test-Path -LiteralPath $Dir)) { throw "project folder not found: $Dir" }
+    $ui = Join-Path $PSScriptRoot 'MimoUiAuto.ps1'
+    if (-not (Test-Path $ui)) { throw "UI automation script missing: $ui" }
+    $mdir = [System.IO.Path]::GetTempFileName()
+    $mm = [System.IO.Path]::GetTempFileName()
+    [System.IO.File]::WriteAllText($mdir, $Dir, (New-Object System.Text.UTF8Encoding($false)))
+    [System.IO.File]::WriteAllText($mm, $Message, (New-Object System.Text.UTF8Encoding($false)))
+    try {
+      $log = @(& powershell -NoProfile -ExecutionPolicy Bypass -File $ui -Action newtask -ProjectFile $mdir -MessageFile $mm 2>&1)
+      $code = $LASTEXITCODE
+    } finally {
+      Remove-Item -LiteralPath $mdir, $mm -Force -ErrorAction SilentlyContinue
+    }
+    $line = @($log | Where-Object { $_ -match '^NEW SESSION: ' }) | Select-Object -Last 1
+    if ($code -ne 0 -or -not $line) { throw ("newtask failed (exit {0}): {1}" -f $code, ($log -join ' | ')) }
+    $id = ([regex]'id=(\S+)').Match($line).Groups[1].Value
+    [pscustomobject]@{
+      ok        = $true
+      action    = 'newtask'
+      dir       = $Dir
+      sessionId = $id
+      log       = @($log)
+    } | ConvertTo-Json -Depth 4
     break
   }
 

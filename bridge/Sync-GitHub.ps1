@@ -30,6 +30,9 @@ $Mirror = Join-Path $Repo 'bridge'
 $MirrorFiles = @(
   'MimoDesktop.ps1', 'MimoProgress.ps1', 'MimoProgress.cmd',
   'Set-Delegation.ps1', 'Check-Drift.ps1', 'Sync-GitHub.ps1', 'README.md',
+  # UI automation for creating projects/sessions; its UI labels live separately
+  # because PowerShell 5.1 cannot decode non-ASCII inside a .ps1 file.
+  'MimoUiAuto.ps1', 'ui-names.json',
   # Install-Plugin.ps1 lives one level down; the copy loop uses the leaf name,
   # so a relative path here is fine (it was silently skipped before).
   'plugin\Install-Plugin.ps1'

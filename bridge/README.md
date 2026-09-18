@@ -278,6 +278,28 @@ Token Plan 则是 `https://token-plan-cn.xiaomimimo.com/v1`。
   或目录里冒出 `tmp-*`，**立刻接管**，不等它自己收敛；它自锁时 `send` 会返回 `409 busy`，
   这时等一轮就接管，别反复 probe 它。
 
+## 新建项目 / 新建会话（UI 自动化，2026-09-19 实测通过）
+
+**为什么必须走 UI**：桌面 API 只有 6 个路由（`health`、`sessions`、`sessions/:id/messages|turns|events|files`）——
+`POST /v1/sessions`、`POST /v1/projects` 都返回 404；引擎 API 要的密钥是主进程内存里的随机 UUID（不落盘）；
+引擎那个 100MB 的 SQLite 也不该由外部直接写。所以建项目/建会话只能驱动它自己的界面。
+
+- 入口：`MimoDesktop.ps1 newproject -Dir <文件夹>`、`newtask -Dir <文件夹> -Message <任务>`
+  （实现都在 `MimoUiAuto.ps1`；界面文案单独放在 `ui-names.json`，因为 PS 5.1 按 ANSI 读脚本，脚本里不能有中文）。
+- **按名字寻址，不按坐标。** Chromium 的无障碍树第一次查询只回几个节点、第二次才铺开
+  （`Get-MimoElement` 就是干这个的），之后全用 UIA：`新建项目`(ExpandCollapse) → `使用现有文件夹`(Invoke)
+  → 原生文件夹框（编辑框 id=1152 设值 + 按钮 id=1 BM_CLICK）；`新建任务`(Invoke) → `proj-chip`(Expand)
+  → `proj-search-input`(Value 过滤) → 项目行(MenuItem/Invoke) → `composer-input`(Value) → 回车。
+- **浮层会遮蔽背景**：菜单或项目选择器一打开，无障碍树里就只剩浮层，所以流程开头有 `Clear-Overlays`
+  ——发现浮层就按 ESC 直到清干净（上一轮失败留下的半开菜单就是这么被收拾的）。
+- **验收不看 UI 文字**：`newtask` 之后轮询 `/v1/sessions`，新会话的 `directory` 等于目标文件夹才算成功。
+  实测：项目 `凡人修仙传模拟器`、`全职高手模拟器` 都建成功，任务会话分别落在各自目录下。
+- 两个实测坑：**P/Invoke 必须写 `CharSet = CharSet.Unicode`**，否则 `GetWindowTextW` 只拿回首字母
+  （默认 ANSI 编组把 UTF-16 当字节串，遇到 NUL 就截断）；**Ctrl+O / Ctrl+N 不吃合成按键**，别指望快捷键。
+- **火绒会直接删脚本**：`HipsDaemon` 把"模拟按键 + 抓屏 + 剪贴板"识别成键盘记录器，
+  `MimoUiAuto.ps1` 必须在火绒信任区里，否则文件会被删除（2026-09-19 真被删过一次）。
+- 执行时会短暂接管键盘/鼠标焦点；用户正在打字时不要调用。
+
 ## 每次改动都要同步到 GitHub（用户长期要求）
 
 仓库：`https://github.com/Qamar-crypto/DSH-skill`（插件在根目录，桥的工具镜像在 `bridge/`）。

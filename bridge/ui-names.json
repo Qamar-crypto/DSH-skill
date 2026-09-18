@@ -1,0 +1,11 @@
+{
+  "_comment": "MiMo Desktop UI labels used by MimoUiAuto.ps1. Chinese literals cannot live inside the .ps1 (PowerShell 5.1 reads script files with the ANSI code page), so they live here, in UTF-8, and are read at run time. If a future MiMo build renames a control, fix it here - not in the script.",
+  "newTaskButton": "新建任务",
+  "newProjectButton": "新建项目",
+  "useExistingFolder": "使用现有文件夹",
+  "projChipId": "proj-chip",
+  "projSearchId": "proj-search-input",
+  "composerId": "composer-input",
+  "noProject": "不使用项目",
+  "addProject": "添加新项目"
+}
