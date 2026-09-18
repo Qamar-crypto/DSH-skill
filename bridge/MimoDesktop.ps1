@@ -31,15 +31,20 @@ Usage:
   powershell -NoProfile -File MimoDesktop.ps1 ask  -SessionId ses_xxx -Message "..." [-TimeoutSec 180]
   powershell -NoProfile -File MimoDesktop.ps1 watch -SessionId ses_xxx [-TimeoutSec 30]
   powershell -NoProfile -File MimoDesktop.ps1 file -SessionId ses_xxx -Path <session-relative path> -Out <local file>
+  powershell -NoProfile -File MimoDesktop.ps1 newjob -Name "<name>" -Message "..." [-Base <parent folder>]
 #>
 [CmdletBinding()]
 param(
   [Parameter(Mandatory, Position = 0)]
-  [ValidateSet('health', 'start', 'list', 'messages', 'progress', 'attachments', 'saveattachments', 'send', 'ask', 'wait', 'watch', 'file', 'version', 'newproject', 'newtask', 'help')]
+  [ValidateSet('health', 'start', 'list', 'messages', 'progress', 'attachments', 'saveattachments', 'send', 'ask', 'wait', 'watch', 'file', 'version', 'newproject', 'newtask', 'newjob', 'help')]
   [string]$Action,
 
   [string]$SessionId,
   [string]$Message,
+  # newjob: project folder name (joined onto D:\ or E:\ or -Base). No illegal chars.
+  [string]$Name,
+  # newjob: optional existing parent folder. Must not be on C: or F:.
+  [string]$Base = '',
   # Long specs break native argument passing (embedded newlines get split).
   # Put the prompt in a file and pass -MessageFile instead.
   [string]$MessageFile,
@@ -76,10 +81,10 @@ $MimoExe = 'D:\MIMO Desk\Xiaomi MiMo\Xiaomi MiMo.exe'
 # Bump this whenever the bridge changes (new action, new parameter, changed
 # behaviour). Check-Drift.ps1 compares it against the skill's stamp, so the
 # skill can never silently fall behind the bridge.
-$BridgeVersion = '1.2.0'
+$BridgeVersion = '1.2.1'
 $BridgeActions = @('health', 'start', 'list', 'messages', 'progress', 'attachments',
   'saveattachments', 'send', 'ask', 'wait', 'watch', 'file', 'version',
-  'newproject', 'newtask')
+  'newproject', 'newtask', 'newjob')
 $AutoStart = -not $NoAutoStart
 
 # -MessageFile exists because a multi-line prompt passed as a native argument
@@ -376,6 +381,119 @@ switch ($Action) {
       dir       = $Dir
       sessionId = $id
       log       = @($log)
+    } | ConvertTo-Json -Depth 4
+    break
+  }
+
+  'newjob' {
+    # newjob: create/reuse a dedicated work folder, open it as a MiMo project,
+    # then create a session inside that project and submit -Message there.
+    # Keeps jobs from piling up in one conversation.
+    # Allowed drives: D: / E: only (C: and F: are banned by policy).
+    if (-not $Name) { throw 'newjob requires -Name <project name>' }
+    $jobName = [string]$Name
+    if ($jobName.Length -gt 60) { throw ("newjob -Name too long (max 60), got {0}" -f $jobName.Length) }
+    if ($jobName -match '[\\/:*?\"<>|]') {
+      throw 'newjob -Name illegal chars: \ / : * ? " < > | are not allowed'
+    }
+    if (-not $Message) { throw 'newjob requires -Message <task text>' }
+
+    $parent = ''
+    if ($Base) {
+      if (-not (Test-Path -LiteralPath $Base -PathType Container)) {
+        throw "newjob -Base parent folder not found: $Base"
+      }
+      $resolvedBase = (Resolve-Path -LiteralPath $Base).Path
+      $root = [System.IO.Path]::GetPathRoot($resolvedBase)
+      $drive = ''
+      if ($root) { $drive = $root.Substring(0, 2).ToUpperInvariant() }
+      if ($drive -eq 'C:' -or $drive -eq 'F:') {
+        throw ("newjob -Base drive {0} is not allowed (C: and F: are banned; use D: or E:)" -f $drive)
+      }
+      $parent = $resolvedBase
+    } else {
+      # Default parent: one dedicated folder instead of scattering job folders
+      # across the drive root (the user could not find them any more). The Chinese
+      # leaf name lives in ui-names.json because this script must stay ASCII.
+      $leaf = 'MiMo Jobs'
+      $uiNames = Join-Path $PSScriptRoot 'ui-names.json'
+      if (Test-Path -LiteralPath $uiNames) {
+        try {
+          $cfg = [System.IO.File]::ReadAllText($uiNames, [System.Text.Encoding]::UTF8) | ConvertFrom-Json
+          if ($cfg.jobsParentName) { $leaf = [string]$cfg.jobsParentName }
+        } catch { }
+      }
+      if (Test-Path -LiteralPath 'D:\') { $parent = Join-Path 'D:\' $leaf }
+      elseif (Test-Path -LiteralPath 'E:\') { $parent = Join-Path 'E:\' $leaf }
+      else { throw 'newjob failed: no usable drive (C: and F: are not allowed; need D: or E:)' }
+      if (-not (Test-Path -LiteralPath $parent)) {
+        New-Item -ItemType Directory -Path $parent -Force | Out-Null
+      }
+    }
+
+    $target = Join-Path $parent $jobName
+    $created = $false
+    if (Test-Path -LiteralPath $target) {
+      if (-not (Test-Path -LiteralPath $target -PathType Container)) {
+        throw "newjob target exists but is not a folder: $target"
+      }
+    } else {
+      try {
+        New-Item -ItemType Directory -Path $target -Force | Out-Null
+        $created = $true
+      } catch {
+        throw ("newjob failed to create folder: {0} ({1})" -f $target, $_.Exception.Message)
+      }
+    }
+
+    # Reuse the same MimoUiAuto.ps1 path as newproject / newtask (temp UTF-8
+    # files + argument arrays; never concatenated command strings).
+    $ui = Join-Path $PSScriptRoot 'MimoUiAuto.ps1'
+    if (-not (Test-Path $ui)) { throw "UI automation script missing: $ui" }
+
+    $allLog = @()
+
+    # Step 1: newproject
+    $tmpProj = [System.IO.Path]::GetTempFileName()
+    [System.IO.File]::WriteAllText($tmpProj, $target, (New-Object System.Text.UTF8Encoding($false)))
+    try {
+      $logProj = @(& powershell -NoProfile -ExecutionPolicy Bypass -File $ui -Action newproject -ProjectFile $tmpProj 2>&1)
+      $codeProj = $LASTEXITCODE
+    } finally {
+      Remove-Item -LiteralPath $tmpProj -Force -ErrorAction SilentlyContinue
+    }
+    $allLog += $logProj
+    if ($codeProj -ne 0) {
+      throw ("newjob newproject failed (exit {0}): {1}" -f $codeProj, ($logProj -join ' | '))
+    }
+
+    # Step 2: newtask (session + message inside that project)
+    $tmpDir = [System.IO.Path]::GetTempFileName()
+    $tmpMsg = [System.IO.Path]::GetTempFileName()
+    [System.IO.File]::WriteAllText($tmpDir, $target, (New-Object System.Text.UTF8Encoding($false)))
+    [System.IO.File]::WriteAllText($tmpMsg, $Message, (New-Object System.Text.UTF8Encoding($false)))
+    try {
+      $logTask = @(& powershell -NoProfile -ExecutionPolicy Bypass -File $ui -Action newtask -ProjectFile $tmpDir -MessageFile $tmpMsg 2>&1)
+      $codeTask = $LASTEXITCODE
+    } finally {
+      Remove-Item -LiteralPath $tmpDir, $tmpMsg -Force -ErrorAction SilentlyContinue
+    }
+    $allLog += $logTask
+    $line = @($logTask | Where-Object { $_ -match '^NEW SESSION: ' }) | Select-Object -Last 1
+    if ($codeTask -ne 0 -or -not $line) {
+      throw ("newjob newtask failed (exit {0}): {1}" -f $codeTask, ($logTask -join ' | '))
+    }
+    $sid = ([regex]'id=(\S+)').Match($line).Groups[1].Value
+    if (-not $sid) { throw ("newjob newtask produced no sessionId: {0}" -f ($logTask -join ' | ')) }
+
+    [pscustomobject]@{
+      ok        = $true
+      action    = 'newjob'
+      name      = $jobName
+      dir       = $target
+      created   = $created
+      sessionId = $sid
+      log       = @($allLog)
     } | ConvertTo-Json -Depth 4
     break
   }

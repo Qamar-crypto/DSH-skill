@@ -25,7 +25,7 @@
 #                           session id the app created for it
 #
 param(
-  [ValidateSet('probe', 'focus', 'shot', 'screencap', 'click', 'keys', 'newtask', 'hover', 'paste', 'newproject', 'tree', 'invoke', 'setvalue')][string]$Action = 'probe',
+  [ValidateSet('probe', 'focus', 'shot', 'screencap', 'click', 'keys', 'newtask', 'hover', 'paste', 'newproject', 'tree', 'invoke', 'setvalue', 'hovername', 'delsession', 'rclick')][string]$Action = 'probe',
   [string]$Out = '',
   [int]$X = -1,
   [int]$Y = -1,
@@ -399,6 +399,105 @@ switch ($Action) {
     Start-Sleep -Milliseconds $SettleMs
     Write-Host ("sent: {0}" -f $Keys)
   }
+  'hovername' {
+    # Move the pointer onto an element found by name/id, using its bounding
+    # rectangle - so hovering never depends on hard-coded coordinates. Needed
+    # because the per-row actions (the "..." menu, the "+" button) only exist
+    # while the pointer is over the row.
+    if (-not $Keys) { throw '-Keys is required: the element name to hover' }
+    $root = Get-MimoElement
+    $hits = Wait-Elements $root $Keys 6
+    if ($hits.Count -eq 0) { throw "no element matching '$Keys'" }
+    $target = $hits[0]
+    foreach ($h in $hits) { if (-not $h.Current.BoundingRectangle.IsEmpty) { $target = $h; break } }
+    $r = $target.Current.BoundingRectangle
+    if ($r.IsEmpty) { throw "element '$Keys' has no on-screen rectangle" }
+    $sx = [int]($r.X + $r.Width / 2)
+    $sy = [int]($r.Y + $r.Height / 2)
+    [void](Focus-Mimo $mimo $mimoPid)
+    [void][W.A]::SetCursorPos($sx, $sy)
+    Start-Sleep -Milliseconds $SettleMs
+    Write-Host ("hovered '{0}' at {1},{2} (rect {3},{4} {5}x{6})" -f $target.Current.Name, $sx, $sy, [int]$r.X, [int]$r.Y, [int]$r.Width, [int]$r.Height)
+  }
+  'rclick' {
+    # Right-click wherever the pointer already is, WITHOUT re-focusing: focusing
+    # again drops the row's hover state, which is what reveals the "..." icon.
+    # A row context menu is reachable this way without hunting for that icon.
+    [W.A]::mouse_event(0x0008, 0, 0, 0, [IntPtr]::Zero)
+    Start-Sleep -Milliseconds 80
+    [W.A]::mouse_event(0x0010, 0, 0, 0, [IntPtr]::Zero)
+    Start-Sleep -Milliseconds $SettleMs
+    Write-Host 'right-clicked'
+  }
+  'delsession' {
+    # Delete one conversation by title: hover its row, click that row's "..." icon
+    # (an unnamed button - found by position, not by a hard-coded coordinate),
+    # then choose the delete item and confirm. Mouse moves happen without
+    # re-focusing in between, because focusing again drops the hover state.
+    if (-not $Keys) { throw '-Keys is required: the conversation title' }
+    $root = Get-MimoElement
+    $hits = Wait-Elements $root $Keys 6
+    if ($hits.Count -eq 0) { throw "no row titled '$Keys'" }
+    $row = $hits[0]
+    foreach ($h in $hits) { if (-not $h.Current.BoundingRectangle.IsEmpty) { $row = $h; break } }
+    $rr = $row.Current.BoundingRectangle
+    if ($rr.IsEmpty) { throw "row '$Keys' has no rectangle" }
+    $rowCy = $rr.Y + $rr.Height / 2
+    $origin = Get-Rect $mimoHwnd
+    [void](Focus-Mimo $mimo $mimoPid)
+    [void][W.A]::SetCursorPos([int]($rr.X + $rr.Width / 2), [int]$rowCy)
+    Start-Sleep -Milliseconds 900
+
+    # Session rows do NOT expose their "..." icon in the accessibility tree (only
+    # project rows do), so borrow the icon COLUMN from a project row and reuse it
+    # at this row's y - the x still comes from the app's own layout, not a guess.
+    $root = Get-MimoElement
+    $iconCol = 0
+    $projIcons = @($root.FindAll([System.Windows.Automation.TreeScope]::Descendants, [System.Windows.Automation.Condition]::TrueCondition) |
+      Where-Object {
+        $_.Current.ControlType.ProgrammaticName -eq 'ControlType.Button' -and
+        -not $_.Current.Name -and
+        -not $_.Current.BoundingRectangle.IsEmpty -and
+        (Get-PatternShorts $_) -contains 'ExpandCollapse' -and
+        $_.Current.BoundingRectangle.X -lt ($origin.Left + 400) -and
+        $_.Current.BoundingRectangle.Y -gt ($origin.Top + 200)
+      })
+    if ($projIcons.Count -gt 0) {
+      $iconCol = [int]($projIcons[0].Current.BoundingRectangle.X + $projIcons[0].Current.BoundingRectangle.Width / 2)
+      Write-Host ("  icon column from a project row: x={0}" -f $iconCol)
+    } else {
+      $iconCol = $origin.Right - 70
+      Write-Host ("  icon column fallback: x={0}" -f $iconCol)
+    }
+    $my = [int]$rowCy
+    # Sweep a few x positions: click, then check whether the row menu appeared. A
+    # session row's "..." icon is not exposed to accessibility tooling, so its exact
+    # column is confirmed by the menu opening instead of being assumed.
+    $menuOpen = $false
+    foreach ($dx in 0, 12, 24, -12, 36) {
+      $mx = $iconCol + $dx
+      Write-Host ("  trying '...' at screen {0},{1}" -f $mx, $my)
+      [void][W.A]::SetCursorPos($mx, $my)
+      Start-Sleep -Milliseconds 350
+      [W.A]::mouse_event(0x0002, 0, 0, 0, [IntPtr]::Zero)
+      Start-Sleep -Milliseconds 60
+      [W.A]::mouse_event(0x0004, 0, 0, 0, [IntPtr]::Zero)
+      Start-Sleep -Milliseconds 700
+      $root = Get-MimoElement
+      if ((Wait-Elements $root $UI.deleteConvo 1).Count -gt 0) { $menuOpen = $true; Write-Host ("  menu opened at x={0}" -f $mx); break }
+    }
+    if (-not $menuOpen) { throw "could not open the row menu for '$Keys'" }
+    $root = Get-MimoElement
+
+    Invoke-Element $UI.deleteConvo $root
+    Start-Sleep -Milliseconds 900
+    $root = Get-MimoElement
+    try { Invoke-Element $UI.confirmDelete $root; Write-Host '  confirmed' } catch { Write-Host ("  no confirm dialog: {0}" -f $_.Exception.Message) }
+    Start-Sleep -Milliseconds 900
+    $root = Get-MimoElement
+    if ((Wait-Elements $root $Keys 2).Count -gt 0) { Write-Host "STILL PRESENT: $Keys"; exit 1 }
+    Write-Host ("deleted: {0}" -f $Keys)
+  }
   'tree' {
     # Dump the interactive elements so automation can address them by name.
     $root = Get-MimoElement
@@ -410,10 +509,16 @@ switch ($Action) {
       $t = $e.Current.ControlType.ProgrammaticName
       if ($keep -notcontains $t) { continue }
       $nm = $e.Current.Name
-      if (-not $nm) { continue }
+      $r = $e.Current.BoundingRectangle
+      # Icon-only buttons (the per-row "..." and "+") carry no accessible name, so
+      # include unnamed buttons as long as they have a rectangle to click.
+      if (-not $nm -and $t -ne 'ControlType.Button') { continue }
+      if (-not $nm -and $r.IsEmpty) { continue }
       $n++
-      if ($n -gt 90) { break }
-      Write-Host ("  [{0}] name='{1}' id='{2}' patterns={3}" -f $t.Replace('ControlType.', ''), $nm, $e.Current.AutomationId, (Get-SupportedPatterns $e))
+      if ($n -gt 120) { break }
+      $rect = 'empty'
+      if (-not $r.IsEmpty) { $rect = ('{0},{1} {2}x{3}' -f [int]$r.X, [int]$r.Y, [int]$r.Width, [int]$r.Height) }
+      Write-Host ("  [{0}] name='{1}' id='{2}' patterns={3} rect={4}" -f $t.Replace('ControlType.', ''), $nm, $e.Current.AutomationId, (Get-SupportedPatterns $e), $rect)
     }
   }
   'invoke' {
@@ -531,6 +636,9 @@ switch ($Action) {
     Write-Host ("NEW SESSION: id={0} directory='{1}' title='{2}'" -f $hit.id, $hit.directory, $hit.title)
   }
 }
+
+
+
 
 
 

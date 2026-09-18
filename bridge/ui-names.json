@@ -7,5 +7,9 @@
   "projSearchId": "proj-search-input",
   "composerId": "composer-input",
   "noProject": "不使用项目",
-  "addProject": "添加新项目"
+  "addProject": "添加新项目",
+  "deleteConvo": "删除对话",
+  "confirmDelete": "删除",
+  "removeProject": "移除",
+  "jobsParentName": "MiMo 外派"
 }

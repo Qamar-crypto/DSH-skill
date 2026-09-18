@@ -284,8 +284,12 @@ Token Plan 则是 `https://token-plan-cn.xiaomimimo.com/v1`。
 `POST /v1/sessions`、`POST /v1/projects` 都返回 404；引擎 API 要的密钥是主进程内存里的随机 UUID（不落盘）；
 引擎那个 100MB 的 SQLite 也不该由外部直接写。所以建项目/建会话只能驱动它自己的界面。
 
-- 入口：`MimoDesktop.ps1 newproject -Dir <文件夹>`、`newtask -Dir <文件夹> -Message <任务>`
-  （实现都在 `MimoUiAuto.ps1`；界面文案单独放在 `ui-names.json`，因为 PS 5.1 按 ANSI 读脚本，脚本里不能有中文）。
+- 入口：`MimoDesktop.ps1 newproject -Dir <文件夹>`、`newtask -Dir <文件夹> -Message <任务>`、
+  `newjob -Name <项目名> -Message <任务>`（建文件夹 + 建项目 + 项目内新会话，一步到位；
+  默认父目录 `D:\MiMo 外派\`，可用 `-Base` 改，**只允许 D:/E:**）。
+  **别为每个小任务都建项目**：任务属于已有项目就用 `newtask` 在**那个项目**里开新会话；
+  只有新主题才 `newjob`。实现都在 `MimoUiAuto.ps1`；界面文案单独放在 `ui-names.json`，
+  因为 PS 5.1 按 ANSI 读脚本，脚本里不能有中文。
 - **按名字寻址，不按坐标。** Chromium 的无障碍树第一次查询只回几个节点、第二次才铺开
   （`Get-MimoElement` 就是干这个的），之后全用 UIA：`新建项目`(ExpandCollapse) → `使用现有文件夹`(Invoke)
   → 原生文件夹框（编辑框 id=1152 设值 + 按钮 id=1 BM_CLICK）；`新建任务`(Invoke) → `proj-chip`(Expand)
