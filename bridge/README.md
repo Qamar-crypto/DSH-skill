@@ -263,6 +263,16 @@ ask -SessionId ses_ffe5f503bf1a2ffeCS40Wd6Cku -Dir 'D:\DSH and MIMOdesktop' -Per
 `https://api.xiaomimimo.com/v1`（OpenAI 兼容）或 `https://api.xiaomimimo.com/anthropic`；
 Token Plan 则是 `https://token-plan-cn.xiaomimimo.com/v1`。
 
+## MiMo 会"假死"然后暴走（2026-09-18 实测，代价：把机器拖崩过一次）
+
+- `wait` 返回的 `stalled` 只是"150 秒没有新事件"，**不等于它死了**——实测它沉默约 3 分钟后自己恢复。
+- 但恢复后可能进入**并行暴走**：同一批自测重复几百次工具调用、开出大量并行 PowerShell 进程、
+  在 `_mimo_bridge\` 里反复建删 `tmp-*`、同名提交重复推送。
+- 所以：**别把"自测 / 反复验证"派出去**——规格里明确写"不要自测 / 不要循环验证 / 不要并行跑"，
+  验收由 DSH 侧做定向小证据。一旦 `progress` 里出现同一动作反复、`newTools` 爆量、
+  或目录里冒出 `tmp-*`，**立刻接管**，不等它自己收敛；它自锁时 `send` 会返回 `409 busy`，
+  这时等一轮就接管，别反复 probe 它。
+
 ## 每次改动都要同步到 GitHub（用户长期要求）
 
 仓库：`https://github.com/Qamar-crypto/DSH-skill`（插件在根目录，桥的工具镜像在 `bridge/`）。
@@ -291,6 +301,10 @@ powershell -NoProfile -ExecutionPolicy Bypass -File 'D:\Deepseek Harness\_mimo_b
 - `Check-Drift.ps1` — 比对桥的 `$BridgeVersion` + 动作表与 skill 的戳/表格，输出
   `IN SYNC` / `DRIFT DETECTED` / `DISABLED`。
 - `Sync-GitHub.ps1` — 上文的同步检查器（镜像 `bridge/`、提交、推 main + tags）。
+- `plugin\dsh-plugin-mimo-delegate\` — 插件包（同时也是仓库根目录那份）：宿主半自证
+  `preflight.mjs` + 客户端半自证 `client-preflight.mjs`（2026-09-18 从包外移进包内，
+  这样它会随仓库一起发布），`npm run check` 一次跑完；`plugin\Install-Plugin.ps1` 负责装进
+  `~/.dsh/profiles/desktop/`（`-Action status|install|revert`）。
 - `worker-session.txt` — 当前 worker 会话 id。
 
 ### PowerShell 5.1 踩过的坑

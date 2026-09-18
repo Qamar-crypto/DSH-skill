@@ -14,12 +14,14 @@
     "lib/client.js",
     "cordis.patch.yml",
     "preflight.mjs",
+    "client-preflight.mjs",
     "README.md",
     "LICENSE"
   ],
   "scripts": {
     "preflight": "node preflight.mjs",
-    "check": "node --check lib/index.js && node --check lib/client.js && node preflight.mjs"
+    "preflight:client": "node client-preflight.mjs",
+    "check": "node --check lib/index.js && node --check lib/client.js && node preflight.mjs && node client-preflight.mjs"
   },
   "dsh": {
     "bundle": {
