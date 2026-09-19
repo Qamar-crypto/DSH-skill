@@ -293,7 +293,12 @@ Token Plan 则是 `https://token-plan-cn.xiaomimimo.com/v1`。
 - **按名字寻址，不按坐标。** Chromium 的无障碍树第一次查询只回几个节点、第二次才铺开
   （`Get-MimoElement` 就是干这个的），之后全用 UIA：`新建项目`(ExpandCollapse) → `使用现有文件夹`(Invoke)
   → 原生文件夹框（编辑框 id=1152 设值 + 按钮 id=1 BM_CLICK）；`新建任务`(Invoke) → `proj-chip`(Expand)
-  → `proj-search-input`(Value 过滤) → 项目行(MenuItem/Invoke) → `composer-input`(Value) → 回车。
+  → `proj-search-input`(Value 过滤) → 项目行(MenuItem/Invoke) → `composer-input`(Value) →
+  **`send-btn`(Invoke) 提交**（不再模拟回车：整条流程一次按键都不需要，不抢焦点、不看输入法）。
+- **运行时既不需要坐标，也不需要截图。** 元素矩形每次现取，所以挪窗、改尺寸、换缩放都不影响——
+  2026-09-19 实测：窗口挪到 `200,120` 并缩到 `969x1120` 后，`newtask` 与 `delsession` 依旧成功。
+  `shot` / `screencap` / `click` / `hover` / `rclick` / `hovername` 只在**诊断与清理**时才用，
+  业务流程不碰它们（会话行的 `⋯` 图标不进无障碍树，只有清理时才需要按矩形点）。
 - **浮层会遮蔽背景**：菜单或项目选择器一打开，无障碍树里就只剩浮层，所以流程开头有 `Clear-Overlays`
   ——发现浮层就按 ESC 直到清干净（上一轮失败留下的半开菜单就是这么被收拾的）。
 - **验收不看 UI 文字**：`newtask` 之后轮询 `/v1/sessions`，新会话的 `directory` 等于目标文件夹才算成功。

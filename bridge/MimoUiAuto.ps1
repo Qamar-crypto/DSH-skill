@@ -621,7 +621,19 @@ switch ($Action) {
     $root = Get-MimoElement
     Set-ElementValue ("id:" + $UI.composerId) $msg $root
     Start-Sleep -Milliseconds 500
-    Send-Sequence 'ENTER'
+    # Submit by clicking the composer's own send button (id=send-btn) instead of
+    # synthesising an Enter key: that removes the last keystroke from this flow, so
+    # nothing depends on focus, on the IME, or on the window's position. Enter
+    # stays as a fallback for builds whose send button has no id.
+    try {
+      $root = Get-MimoElement
+      Invoke-Element ("id:" + $UI.sendBtnId) $root
+      Write-Host '  submitted via send button'
+    } catch {
+      Write-Host ("  send button unavailable ({0}) - falling back to Enter" -f $_.Exception.Message)
+      [void](Focus-Mimo $mimo $mimoPid)
+      Send-Sequence 'ENTER'
+    }
     Write-Host 'task submitted'
 
     $hit = $null
